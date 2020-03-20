@@ -1,0 +1,235 @@
+extentreports的pom依赖：
+<dependency>
+			<groupId>com.aventstack</groupId>
+			<artifactId>extentreports</artifactId>
+			<version>3.1.5</version>
+		</dependency>
+		<!-- https://mvnrepository.com/artifact/aopalliance/aopalliance -->
+		<dependency>
+			<groupId>aopalliance</groupId>
+			<artifactId>aopalliance</artifactId>
+			<version>1.0</version>
+		</dependency>
+		<!-- https://mvnrepository.com/artifact/aspectj/aspectjweaver -->
+		<dependency>
+			<groupId>aspectj</groupId>
+			<artifactId>aspectjweaver</artifactId>
+			<version>1.5.4</version>
+		</dependency>
+
+基于extentreports实现的IReporter接口：
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+    import org.testng.IReporter;
+import org.testng.IResultMap;
+import org.testng.ISuite;
+import org.testng.ISuiteResult;
+import org.testng.ITestContext;
+import org.testng.ITestResult;
+import org.testng.Reporter;
+import org.testng.xml.XmlSuite;
+
+import com.netease.kaola.onlinetest.test.common.ExtentReportsContext;
+import com.alibaba.fastjson.JSONObject;
+import com.aventstack.extentreports.ExtentTest;
+import com.aventstack.extentreports.Status;
+import org.apache.commons.lang3.StringUtils;
+
+public class ExtentTestNGReporter implements IReporter {
+
+	List groups = new ArrayList();
+
+	public void generateReport(List xmlSuites, List suites, String outputDirectory) {
+		for (ISuite suite : suites) {
+			Map result = suite.getResults();
+
+			for (ISuiteResult r : result.values()) {
+				ITestContext context = r.getTestContext();
+
+				ExtentTest parent = ExtentReportsContext.getInstance().createTest(context.getSuite().getName());
+				ExtentReportsContext.parentTest.set(parent);
+
+				buildTestNodes(context.getFailedTests(), Status.FAIL);
+				buildTestNodes(context.getSkippedTests(), Status.SKIP);
+				buildTestNodes(context.getPassedTests(), Status.PASS);
+
+				for (String group : groups) {
+					ExtentReportsContext.parentTest.get().assignCategory(group);
+					ExtentReportsContext.getInstance().flush();
+				}
+				groups.clear();
+			}
+		}
+
+		for (String s : org.testng.Reporter.getOutput()) {
+			ExtentReportsContext.getInstance().setTestRunnerOutput(s);
+		}
+	}
+
+	private void buildTestNodes(IResultMap tests, Status status) {
+		if (tests.size() > 0) {
+			for (ITestResult result : tests.getAllResults()) {
+
+				ExtentTest child = ExtentReportsContext.parentTest.get().createNode(result.getMethod().getMethodName());
+				ExtentReportsContext.test.set(child);
+
+				String groupsStr = "";
+				for (String group : result.getMethod().getGroups()) {
+					if (!groups.contains(group)) {
+						groups.add(group);
+					}
+
+					if (!StringUtils.isEmpty(groupsStr)) {
+						groupsStr += "|";
+					}
+					groupsStr += group;
+
+					ExtentReportsContext.test.get().assignCategory(group);
+				}
+
+				if (!StringUtils.isEmpty(result.getMethod().getDescription())) {
+					ExtentReportsContext.test.get().log(Status.PASS,
+							String.format("用例描述:%s Priority:%s 分组:%s", result.getMethod().getDescription(),
+									Integer.toString(result.getMethod().getPriority()), groupsStr));
+				}
+
+				if (result.getParameters().length > 0) {
+					for (int i = 0; i < result.getParameters().length; i++) {
+						ExtentReportsContext.test.get().log(Status.PASS, "用例参数列表:");
+						ExtentReportsContext.test.get().log(Status.PASS, String.format("第%d个参数:", i + 1));
+						ExtentReportsContext.test.get().log(Status.PASS,
+								JSONObject.toJSONString(result.getParameters()[i]));
+					}
+				}
+
+				ExtentReportsContext.test.get().log(Status.PASS,
+						String.format("=============Run: %s===============", result.getMethod()));
+
+				List outputs = Reporter.getOutput(result);
+				if (outputs != null) {
+					for (String output : outputs) {
+						ExtentReportsContext.test.get().log(Status.PASS, output);
+					}
+				}
+
+				if (result.getThrowable() != null) {
+					ExtentReportsContext.test.get().log(status, result.getThrowable());
+				}
+
+				ExtentReportsContext.test.get().getModel().setStartTime(getTime(result.getStartMillis()));
+				ExtentReportsContext.test.get().getModel().setEndTime(getTime(result.getEndMillis()));
+			}
+
+			ExtentReportsContext.getInstance().flush();
+		}
+	}
+
+	private Date getTime(long millis) {
+		Calendar calendar = Calendar.getInstance();
+		calendar.setTimeInMillis(millis);
+		return calendar.getTime();
+	}
+}
+
+import com.aventstack.extentreports.ExtentReports;
+import com.aventstack.extentreports.ExtentTest;
+import com.aventstack.extentreports.ResourceCDN;
+import com.aventstack.extentreports.reporter.ExtentHtmlReporter;
+import com.aventstack.extentreports.reporter.configuration.ChartLocation;
+
+public class ExtentReportsContext {
+
+	private static ExtentReports extent;
+	public static ThreadLocal parentTest = new ThreadLocal();
+	public static ThreadLocal test = new ThreadLocal();
+
+	public static ExtentReports getInstance() {
+		if (extent == null)
+			createInstance("接口测试报告.html");
+
+		return extent;
+	}
+
+	public static ExtentReports createInstance(String fileName) {
+		ExtentHtmlReporter htmlReporter = new ExtentHtmlReporter(fileName);
+		htmlReporter.config().setTestViewChartLocation(ChartLocation.BOTTOM);
+		htmlReporter.config().setChartVisibilityOnOpen(true);
+		// htmlReporter.config().setTheme(Theme.STANDARD);
+		htmlReporter.config().setResourceCDN(ResourceCDN.EXTENTREPORTS);
+		htmlReporter.config().setDocumentTitle(fileName);
+		htmlReporter.config().setEncoding("utf-8");
+		htmlReporter.config().setReportName(fileName);
+
+		extent = new ExtentReports();
+		extent.attachReporter(htmlReporter);
+
+		return extent;
+	}
+}
+
+pom文件中maven-surefire-plugin插件，maven-surefire-plugin插件集成了TestNG&JUnit，任何实现了ITestNGListener的接口的类都可以配置进来。
+
+	<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<version>${version.maven.plugins}</version>
+				<configuration>
+					<useSystemClassLoader>true</useSystemClassLoader>
+					<testFailureIgnore>true</testFailureIgnore>
+					<parallel>false</parallel>
+					<forkMode>once</forkMode>
+					<suiteXmlFiles>
+						<suiteXmlFile>src/main/resources/testng/${run}-${runtype}-testng.xml</suiteXmlFile>
+					</suiteXmlFiles>
+					<properties>
+						<property>
+							<name>usedefaultlisteners</name>
+							<value>false</value>
+						</property>
+						<property>
+							<name>listener</name>
+							<value>org.uncommons.reportng.HTMLReporter,org.uncommons.reportng.JUnitXMLReporter,com.netease.kaola.onlinetest.test.common.ExtentTestNGReporter</value>
+						</property>
+					</properties>
+					<workingDirectory>target/</workingDirectory>
+				</configuration>
+			</plugin>
+
+testng的xml配置文件中
+
+<!DOCTYPE suite SYSTEM "http://testng.org/testng-1.0.dtd">
+<suite name="dubbok_bvt_testsuite" verbose="1" parallel="false">
+	<test name="dubbok_bvt_testsuite">
+		<groups>
+			<run>
+				<include name="dubbok" />
+			</run>
+		</groups>
+
+		<packages>
+			<package name="com.netease.kaola.onlinetest.test.bvt.dubbok.*" />
+		</packages>
+	</test>
+	<listeners>
+		<listener class-name="com.netease.kaola.onlinetest.test.common.ExtentTestNGReporter" />
+		<listener class-name="com.netease.kaola.onlinetest.test.common.KaolaTestListener" />
+	</listeners>
+</suite>
+
+测试类添加注解标签
+
+package com.netease.kaola.onlinetest.test.base;
+
+import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.context.testng.AbstractTestNGSpringContextTests;
+import org.testng.annotations.Listeners;
+
+import com.netease.kaola.onlinetest.test.common.KaolaTestListener;
+
+@Listeners({ KaolaTestListener.class })
+@ContextConfiguration(locations = { "classpath:application.xml" })
+public abstract class BaseTest extends AbstractTestNGSpringContextTests {
+}
